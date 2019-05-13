@@ -1,4 +1,4 @@
-function [p_out] = globalFit(i_model, X, Y, tint) 
+function [p_out] = globalFit2(i_model, X, Y, tint) 
 %
 % Purpose %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
@@ -61,28 +61,29 @@ ttl = X(:,1); % vector containing all interval times
 
 %% Initialization
 % vector containing fitting results by globally fitting 
-p_out = zeros(1,length(ttl)+7);  
-a_para = Y(:,1); % Initialize the vector for A
+p_out = zeros(1,8);  
+a_para = max(Y(:,1)); % Initialize A
 weights = ones(size(X));      % fitting weights
-lower_B = 1/min(a_para(a_para>0)); % the lower bound for the amplitudes
+B_temp = Y(:,1);
+lower_B = 1/min(B_temp(B_temp > 0)); % the lower bound for the amplitudes
 upper_koff = 1/tint;     % the upper bound for off rates
 %i_model = 1: mono-exponential distribution
 %i_model = 2: bi-exponential distribution
 %i_model = 3: tri-exponential distribution
     if i_model == 1   % fitting using mono-exponential function                             
-            para = [1,  1, a_para']; % para  = [kb, koff, A];
-            lb   = [0,  0, zeros(size(ttl))']; % lower bounds
-            ub   = [Inf,upper_koff, Inf*ones(size(ttl))']; % upper bounds
-            f1 = @(p)(   (model(i_model,p,X,tint,ttl)-Y).*weights ); % fitting function
+            para = [1, 1, a_para]; % para  = [kb, koff, A];
+            lb   = [0, 0, 0]; % lower bounds
+            ub   = [Inf, upper_koff, Inf]; % upper bounds
+            f1 = @(p)(   (model2(i_model,p,X,tint,ttl)-Y).*weights ); % fitting function
             opts = optimset('Display','off');
             % Fit
             [p] = lsqnonlin(f1,para,lb,ub,opts);  
             p_out = [p(1:2),1,zeros(1,4),p(3:end)];
     elseif i_model == 2 % fitting using bi-exponential function        
-            para = [1,  1,          0.5,        2,          a_para']; % para = [kb, koff1, B1, koff2, A];
-            lb   = [0,  1e-3,       lower_B,    1e-3,       zeros(size(ttl))']; % lower bounds
-            ub   = [Inf,upper_koff, 1-lower_B,  upper_koff, Inf*ones(size(ttl))']; % upper bounds
-            f1 = @(p)(   (model(i_model,p,X,tint,ttl)-Y).*weights ); % fitting function
+            para = [1,  1,          0.5,        2,          a_para]; % para = [kb, koff1, B1, koff2, A];
+            lb   = [0,  1e-3,       lower_B,    1e-3,       0]; % lower bounds
+            ub   = [Inf,upper_koff, 1-lower_B,  upper_koff, Inf]; % upper bounds
+            f1 = @(p)(   (model2(i_model,p,X,tint,ttl)-Y).*weights ); % fitting function
             opts = optimset('Display','off');
             % Fit
             [p] = lsqnonlin(f1,para,lb,ub,opts);
@@ -91,14 +92,14 @@ upper_koff = 1/tint;     % the upper bound for off rates
             p_temp = p_temp'; 
             p_out = [p(1),p_temp(:)', zeros(1,2), p(5:end)];
     elseif i_model == 3
-            para = [ 1,   0.05,       0.3,        0.5,        0.3,      5,            a_para'];
-            lb   = [ 0,   1e-3,       lower_B,    1e-3,       lower_B,  1e-3,          zeros(size(ttl))'];
-            ub   = [ Inf, upper_koff, 1-lower_B,  upper_koff, 1-lower_B,upper_koff,   Inf*ones(size(ttl))'];
-            f1 = @(p)(   sum(sum((model(i_model,p,X,tint,ttl)-Y).^2.*weights,2 )));
+            para = [ 1,   0.05,         0.3,        0.5,        0.3,        5,          a_para];
+            lb   = [ 0,   1e-3,         lower_B,    1e-3,       lower_B,    1e-3,        0];
+            ub   = [ Inf, upper_koff,   1-lower_B,  upper_koff, 1-lower_B,  upper_koff, Inf];
+            f1 = @(p)(sum(sum((model2(i_model,p,X,tint,ttl)-Y).^2.*weights,2 )));
             opts = optimoptions('fmincon', 'MaxFunctionEvaluations',10000,...
             'MaxIter',3000,'Algorithm','interior-point','StepTolerance', 1.0000e-9);
             b = 1-2*lower_B;
-            A = [0,0,1,0,1,0,zeros(1,size(a_para,1))];
+            A = [0,0,1,0,1,0,0];
             [p] = fmincon(f1,para,A,b,[],[],lb,ub,[],opts);             
             p_temp = sortrows([p(2) p(3); p(4) p(5); p(6) (1-p(3)-p(5))]);
             p_temp = p_temp';   
@@ -106,8 +107,8 @@ upper_koff = 1/tint;     % the upper bound for off rates
     end
 end
 
-function f = model(i_model,para,X,tint,ttl)
-% function f = model(n_para,para,X,tint,ttl)
+function f = model2(i_model,para,X,tint,ttl)
+% function f = model2(n_para,para,X,tint,ttl)
 %
 % Purpose %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
@@ -145,28 +146,24 @@ p = tint./ttl; p = p(:);
 if i_model == 1
     kb = para(1);
     koff1 = para(2);
-    ampl = para(3:end);
-    f = (ampl'*ones(1,size(X,2))).*...
-        (exp(-((kb.*p + koff1)*ones(1,size(X,2))).*X));   
+    ampl = para(3);
+    f = ampl * (exp(-((kb.*p + koff1)).*X));   
 elseif i_model == 2
     kb = para(1);    
     koff1 = para(2);
     B1 = para(3);
     koff2 = para(4);
-    ampl = para(5:end);
-    f = (ampl'*ones(1,size(X,2))).*...
-        (B1.*exp(-((kb.*p + koff1)*ones(1,size(X,2))).*X)+...
-        (1-B1) .* exp( -(kb.*p + koff2)*ones(1,size(X,2)).*X ));
+    ampl = para(5);
+    f = ampl * (B1*exp(-((kb.*p + koff1)).*X) +...
+        (1-B1)*exp(-((kb.*p + koff2)).*X));
 elseif i_model == 3
-
     kb = para(1);
     koff1 = para(2);    B1 = para(3);
     koff2 = para(4);    B2 = para(5);
     koff3 = para(6);
-    ampl = para(7:end);
-    f = (ampl'*ones(1,size(X,2))).*...
-        (B1.*exp(-((kb.*p + koff1) * ones(1,size(X,2))).*X)...
-        + B2.* exp( -(kb.*p + koff2)*ones(1,size(X,2)).*X )+...
-        (1-B1-B2).* exp( -(kb.*p + koff3)*ones(1,size(X,2)).*X ));
+    ampl = para(7);
+    f = ampl * (B1*exp(-((kb.*p + koff1)).*X) +...
+        B2*exp(-((kb.*p + koff2)).*X) + (1 - B1 - B2) * ...
+        exp(-((kb.*p + koff3)).*X));
 end   
 end

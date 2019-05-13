@@ -122,7 +122,7 @@ function residenceTimeDistSimulation
 % n_repeat_all = 100;
 %
 % Authors %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% Han N. Ho - December 2018
+% Han N. Ho - Apr 2019
 % 
 %--------------------------------------------------------------------------
 tic
@@ -136,23 +136,32 @@ kb = 7;
 % tint is integration time (unit: second)
 tint = 0.1;
 %ttl include all intervals to be used in the simulation (unit: second)
-ttl = [0.1; 0.2; 0.3; 0.4; 0.6; 1; 2; 3; 5; 8; 10];  
+ttl = [0.1; 0.3; 0.7; 1; 3; 7; 10; 30; 70; 100];  
 % B_all is a vector whose rows represent the amplitudes of koff1 and koff2
 % (B1 and B2). The amplitude of koff3 is (1 - B1 - B2).
 % koff1, koff2 and koff3 represent the off rates of sub-populations (unit:
 % per second). 
 %For simulations of single-exponential distribution: B_all = [1 0];
-B_all = [0.9 0.1; 0.75 0.25];
-koff1 = 0.1;
-koff2 = 1;
-koff3 = 5;
+%B_all = [0.9 0.1; 0.75 0.25; 0.5 0.5; 0.25 0.75; 0.1 0.9];
+B_all = [1/13 9/13];
+koff1 = 0.01;
+koff2 = 0.1;
+koff3 = 1;
 % n_count_all is an array whose values determine the number of counts (n) 
 % in each simulation. n corresponds to the value of the first bin in the 
 % cumulative residence time distribution and serve as the stopping 
 % condition of the simulation. 
-n_count_all = [1000; 3000; 10000; 30000];
+%n_count_all = [1000; 3000; 10000; 30000; 100000];
+n_count_all = [1000; 3000; 10000; 30000; 100000; 1000000];
 % n_repeat_all is the number of simulations using the identical inputs.
-n_repeat_all = 100; 
+n_repeat_all = 100;
+fit_model = [1; 2; 3];
+n_bootstrap = 10; % the number of bootstrap repeats
+A_global = 1; % A_global = 1: fit with amplitude as global parameter
+
+% save simulation inputs as csv file
+summary = [kb koff1 koff2 koff3 tint ttl' n_count_all' B_all(:)'];
+dlmwrite(strcat(filepath, filesep,'Summary.csv'), summary);
 %% Simulation
 % Simulate single or multiple exponential distribution with koff1, koff2 
 % and koff3 and their corresponding amplitudes B1, B2 and (1 - B1 - B2). 
@@ -160,19 +169,12 @@ for i_B = 1:size(B_all,1)
     B = B_all(i_B,:); B = B'; %B = [B1; B2];    
     % time constants obtained from global fitting using mono-exponential
     % function
-    tau = zeros(n_repeat_all,length(n_count_all)); 
-    % off rates obtained from global fitting using mono-exponential
-    % function    
-    koff1_all_count = tau;
-    
     for u = 1:length(n_count_all)
     n_count_total = n_count_all(u); % the number of observation
-    % summary of fitting outcomes by global fitting using mono-exponential
-    % function
-    koff1_summary = zeros(n_repeat_all,9); 
-    % summary of fitting outcomes by global fitting using bi-exponential
-    % function
-    koff2_summary = zeros(n_repeat_all,9); 
+    % summary of fitting outcomes by global fitting 
+    koff1_summary = zeros(n_repeat_all,13); %mono-exponential
+    koff2_summary = koff1_summary; %di-exponential
+    koff3_summary = koff1_summary; %tri-exponential
     for n_repeat = 1:n_repeat_all
         disp(strcat('Repeat ',num2str(n_repeat),'_counts_',...
             num2str(n_count_total)));
@@ -222,15 +224,19 @@ for i_B = 1:size(B_all,1)
         end
         % save CRTD table across all intervals to csv file
         filename1 = strcat(filepath, filesep, num2str(n_count_total),...
-            '_Residence_',num2str(n_repeat),'_B1_',...
-            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
-            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+            '_CRTD_',num2str(n_repeat),'_B1_', num2str(B(1)),'_koff1_',...
+            num2str(koff1), '_B2_', num2str(B(2)), '_koff2_',...
+            num2str(koff2),'.csv');
         dlmwrite(filename1, frequency_write);         
         %% Bootstrap the simulated population        
-        n_bootstrap = 10; % the number of bootstrap repeats        
         keff_tautl  = zeros(n_bootstrap,length(ttl)); % keff_tautl from all bootstrapped samples
         time_all    = zeros(length(ttl),9); % real time for global fitting
-         
+        p1          = zeros(n_bootstrap, length(ttl) + 7);
+        p2          = p1;
+        p3          = p1;
+        p1_A_global = zeros(n_bootstrap, 8);
+        p2_A_global = p1_A_global;
+        p3_A_global = p1_A_global; 
         for i_bt = 1:n_bootstrap
             counts = zeros(10,length(ttl));
             for i = 1:length(ttl)
@@ -249,10 +255,28 @@ for i_B = 1:size(B_all,1)
             keff_tautl(i_bt,i) = ttl(i)*f.b*(-1);
             end
 %%          Global Fitting     
-            [p1(i_bt,:),p2(i_bt,:)] = globalFit(time_all,counts(2:end,:)',tint);            
-        end
+            for kk = 1:length(fit_model)
+                if fit_model(kk) == 1      %fit mono-exponential model 
+                    [p1(i_bt,:)] = globalFit(1, time_all, counts(2:end,:)', tint);            
+                elseif fit_model(kk) == 2  %fit di-exponential model
+                    [p2(i_bt,:)] = globalFit(2, time_all, counts(2:end,:)', tint);            
+                elseif fit_model(kk) == 3  %fit tri-exponential model
+                    [p3(i_bt,:)] = globalFit(3, time_all, counts(2:end,:)', tint);            
+                end
+            end
+            if A_global == 1
+                for kk = 1:length(fit_model)
+                    if fit_model(kk) == 1      %fit mono-exponential model 
+                        [p1_A_global(i_bt,:)] = globalFit2(1, time_all, counts(2:end,:)', tint);            
+                    elseif fit_model(kk) == 2  %fit di-exponential model
+                        [p2_A_global(i_bt,:)] = globalFit2(2, time_all, counts(2:end,:)', tint);            
+                    elseif fit_model(kk) == 3  %fit tri-exponential model
+                        [p3_A_global(i_bt,:)] = globalFit2(3, time_all, counts(2:end,:)', tint);            
+                    end
+                end
+            end
+         end   
 %%      keff*tautl plot
-
         % calculate keff*tautl from all bootrstrapped samples
         M = zeros(length(ttl),3);        
         for i = 1:length(ttl)    
@@ -271,77 +295,483 @@ for i_B = 1:size(B_all,1)
         figure(1);        
         shadedErrorBar(M(:,1),M(:,2),M(:,3),'-g',1);
         saveas(gcf, fullfile(filepath,filesep,strcat(filename2,'.fig')));
-%% Summary of Global Fitting        
-        % fitting outcomes using mono-exponential function
-        kb_1 = mean(p1(:,1)); % mean photobleaching rate
-        kb_sd_1 = std(p1(:,1)); % std of photobleaching rate
-        koff_1 = mean(p1(:,2)); % mean off rate
-        koff_sd_1 = std(p1(:,2)); % std of off rate
-        % fitting outcomes using bi-exponential function
-        kb_2 = mean(p2(:,1)); % mean photobleaching rate
-        kb_sd_2 = std(p2(:,1)); % std of photobleaching rate
-        koff1_2 = mean(p2(:,2)); % mean of the slow off rate
-        koff1_sd_2 = std(p2(:,2)); % std of the slow off rate
-        B1_2 = mean(p2(:,3)); % mean amplitude of the slow off rate
-        B1_sd_2 = std(p2(:,3)); % std of the amplitude of the slow off rate
-        koff2_2 = mean(p2(:,4)); % mean of the fast off rate
-        koff2_sd_2 = std(p2(:,4)); % std of the fast off rate
-        B2_2 = 1 - B1_2; % the amplitude of the fast off rate
-        % vectors containing means and stds of photobleaching rates and off
-        % rates from globally fitting CRTDs
-        k_all_1 = [kb_1 kb_sd_1 koff_1 koff_sd_1 1 0 0 0 0];
-        k_all_2 = [kb_2 kb_sd_2 koff1_2 koff1_sd_2 B1_2 B1_sd_2...
-            koff2_2 koff2_sd_2 B2_2];        
-        
-        koff1_summary(n_repeat,:) = k_all_1;
-        koff2_summary(n_repeat,:) = k_all_2;
+    %% Summary of Global Fitting
+        try
         % save fitting outcomes from individual simulation to csv files
-        filename3 = strcat(filepath, filesep, num2str(n_count_total),...
-            '_koff_1_',num2str(n_repeat),'_B1_',...
+        % mono-exponential    
+            filename3 = strcat(filepath, filesep, num2str(n_count_total),...
+            '_1koff_',num2str(n_repeat),'_B1_',...
             num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
             num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
-        filename4 = strcat(filepath, filesep, num2str(n_count_total),...
-            '_koff_2_',num2str(n_repeat),'_B1_',...
+            
+            dlmwrite(filename3, p1);
+            % fitting outcomes using mono-exponential function
+            kb_1        = mean(p1(:,1)); % mean photobleaching rate
+            kb_sd_1     = std(p1(:,1)); % std of photobleaching rate
+            koff_1      = mean(p1(:,2)); % mean off rate
+            koff_sd_1   = std(p1(:,2)); % std of off rate
+            koff1_summary(n_repeat,:) = [kb_1 kb_sd_1 koff_1 koff_sd_1 1 ...
+                zeros(1,8)];
+            
+            % bi-exponential
+            filename4 = strcat(filepath, filesep, num2str(n_count_total),...
+            '_2koff_',num2str(n_repeat),'_B1_',...
             num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
             num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+            
+            dlmwrite(filename4, p2);
+            % fitting outcomes using bi-exponential function
+            kb_2        = mean(p2(:,1)); % mean photobleaching rate
+            kb_sd_2     = std(p2(:,1)); % std of photobleaching rate
+            koff1_2     = mean(p2(:,2)); % mean of the slow off rate
+            koff1_sd_2  = std(p2(:,2)); % std of the slow off rate
+            B1_2        = mean(p2(:,3)); % mean amplitude of the slow off rate
+            B1_sd_2     = std(p2(:,3)); % std of the amplitude of the slow off rate
+            koff2_2     = mean(p2(:,4)); % mean of the fast off rate
+            koff2_sd_2  = std(p2(:,4)); % std of the fast off rate
+            B2_2        = 1 - B1_2; % the amplitude of the fast off rate
+            koff2_summary(n_repeat,:) = [kb_2 kb_sd_2 koff1_2 koff1_sd_2 ...
+                B1_2 B1_sd_2 koff2_2 koff2_sd_2 B2_2 zeros(1,4)]; 
+            
+            % tri-exponential
+            filename5 = strcat(filepath, filesep, num2str(n_count_total),...
+            '_3koff_',num2str(n_repeat),'_B1_',...
+            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
+            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+            
+            dlmwrite(filename5, p3);
+            
+            kb_3        = mean(p3(:,1)); % mean photobleaching rate
+            kb_sd_3     = std(p3(:,1)); % std of photobleaching rate
+            koff1_3     = mean(p3(:,2)); % mean of the slow off rate
+            koff1_sd_3  = std(p3(:,2)); % std of the slow off rate
+            B1_3        = mean(p3(:,3)); % mean amplitude of the slow off rate
+            B1_sd_3     = std(p3(:,3)); % std of the amplitude of the slow off rate
+            koff2_3     = mean(p3(:,4)); % mean of the intermediate off rate
+            koff2_sd_3  = std(p3(:,4)); % std of the fast intermediate off rate
+            B2_3        = mean(p3(:,5)); % mean amplitude of the intermediate off rate
+            B2_sd_3     = std(p3(:,5)); % mean amplitude of the intermediate off rate
+            koff3_3     = mean(p3(:,6)); % mean of the fast off rate
+            koff3_sd_3  = std(p3(:,6)); % std of the fast off rate
+            B3_3        = 1 - B1_3 - B2_3; % amplitude of the fast off rate
+            koff3_summary(n_repeat,:) = [kb_3 kb_sd_3 koff1_3 koff1_sd_3 ...
+                B1_3 B1_sd_3 koff2_3 koff2_sd_3 B2_3 B2_sd_3 koff3_3 ...
+                koff3_sd_3 B3_3];
+        catch
+        end
         
-        dlmwrite(filename3, p1);        
-        dlmwrite(filename4, p2);                
+    %% Summary of Global Fitting with amplitude as global parameter
+    if A_global == 1    
+        try
+        % save fitting outcomes from individual simulation to csv files
+        % mono-exponential    
+            filename3 = strcat(filepath, filesep, 'A', num2str(n_count_total),...
+            '_1koff_',num2str(n_repeat),'_B1_',...
+            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
+            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+            
+            dlmwrite(filename3, p1_A_global); 
+            % fitting outcomes using mono-exponential function
+            kb_1        = mean(p1_A_global(:,1)); % mean photobleaching rate
+            kb_sd_1     = std(p1_A_global(:,1)); % std of photobleaching rate
+            koff_1      = mean(p1_A_global(:,2)); % mean off rate
+            koff_sd_1   = std(p1_A_global(:,2)); % std of off rate
+            A_koff1_summary(n_repeat,:) = [kb_1 kb_sd_1 koff_1 koff_sd_1 1 ...
+                zeros(1,8)];
+            
+            filename4 = strcat(filepath, filesep, 'A', num2str(n_count_total),...
+            '_2koff_',num2str(n_repeat),'_B1_',...
+            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
+            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+            % bi-exponential
+            dlmwrite(filename4, p2_A_global);
+            % fitting outcomes using bi-exponential function
+            kb_2        = mean(p2_A_global(:,1)); % mean photobleaching rate
+            kb_sd_2     = std(p2_A_global(:,1)); % std of photobleaching rate
+            koff1_2     = mean(p2_A_global(:,2)); % mean of the slow off rate
+            koff1_sd_2  = std(p2_A_global(:,2)); % std of the slow off rate
+            B1_2        = mean(p2_A_global(:,3)); % mean amplitude of the slow off rate
+            B1_sd_2     = std(p2_A_global(:,3)); % std of the amplitude of the slow off rate
+            koff2_2     = mean(p2_A_global(:,4)); % mean of the fast off rate
+            koff2_sd_2  = std(p2_A_global(:,4)); % std of the fast off rate
+            B2_2        = 1 - B1_2; % the amplitude of the fast off rate
+            A_koff2_summary(n_repeat,:) = [kb_2 kb_sd_2 koff1_2 koff1_sd_2 ...
+                B1_2 B1_sd_2 koff2_2 koff2_sd_2 B2_2 zeros(1,4)]; 
+            
+            filename5 = strcat(filepath, filesep, 'A', num2str(n_count_total),...
+            '_3koff_',num2str(n_repeat),'_B1_',...
+            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
+            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+            % tri-exponential
+            dlmwrite(filename5, p3_A_global);
+            
+            % fitting outcomes using tri-exponential function 
+            kb_3        = mean(p3_A_global(:,1)); % mean photobleaching rate
+            kb_sd_3     = std(p3_A_global(:,1)); % std of photobleaching rate
+            koff1_3     = mean(p3_A_global(:,2)); % mean of the slow off rate
+            koff1_sd_3  = std(p3_A_global(:,2)); % std of the slow off rate
+            B1_3        = mean(p3_A_global(:,3)); % mean amplitude of the slow off rate
+            B1_sd_3     = std(p3_A_global(:,3)); % std of the amplitude of the slow off rate
+            koff2_3     = mean(p3_A_global(:,4)); % mean of the intermediate off rate
+            koff2_sd_3  = std(p3_A_global(:,4)); % std of the fast intermediate off rate
+            B2_3        = mean(p3_A_global(:,5)); % mean amplitude of the intermediate off rate
+            B2_sd_3     = std(p3_A_global(:,5)); % mean amplitude of the intermediate off rate
+            koff3_3     = mean(p3_A_global(:,6)); % mean of the fast off rate
+            koff3_sd_3  = std(p3_A_global(:,6)); % std of the fast off rate
+            B3_3        = 1 - B1_3 - B2_3; % amplitude of the fast off rate
+            A_koff3_summary(n_repeat,:) = [kb_3 kb_sd_3 koff1_3 koff1_sd_3 ...
+                B1_3 B1_sd_3 koff2_3 koff2_sd_3 B2_3 B2_sd_3 koff3_3 ...
+                koff3_sd_3 B3_3];
+        catch
+        end
+    end    
     end
     % save fitting outcomes from all simulations to csv file
-    filename5 = strcat(filepath, filesep, num2str(n_count_total),...
-            'koff1_summary_', num2str(n_repeat),'_B1_',...
+    try
+        % summary of tau and amplitude across counts
+        % from mono-exponential fit
+        filename5 = strcat(filepath, filesep, num2str(n_count_total),...
+            '_summary_1koff_', num2str(n_repeat),'_B1_',...
             num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
             num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
-    dlmwrite(filename5, koff1_summary);
-     
-    filename6 = strcat(filepath, filesep, num2str(n_count_total),...
-            'koff2_summary_', num2str(n_repeat),'_B1_',...
-            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
-            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
-    dlmwrite(filename6, koff2_summary);
-    % compile a table for koff only (from globaly fitting using
-    % mono-exponential function)
-    koff1_all_count(:,u) = koff1_summary(:,3);
-    % compile a table for time constants only (from globaly fitting using
-    % mono-exponential function)
-    tau(:,u) = 1./koff1_summary(:,3);        
-    end
-    % save simulation inputs as csv file
-    summary = [kb koff1 koff2 koff3 tint toc  ttl' B(1) B(2)];
-    dlmwrite(strcat(filepath, filesep,num2str(B(1)),'_Summary.csv'), summary);
-    % save koff (from globaly fitting using mono-exponential function) as csv file
-    dlmwrite(strcat(filepath, filesep,num2str(B(1)),'_Summary_koff1.csv'), koff1_all_count);
-    % save time constants (from globaly fitting using mono-exponential function) as csv file
-    dlmwrite(strcat(filepath, filesep,num2str(B(1)),'_Summary_tau_koff1.csv'), tau);
+        dlmwrite(filename5, koff1_summary);
+        tau_all(:,u) = 1./koff1_summary(:,3);
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_',num2str(B(2)),...
+        '_Summary_1koff_tau.csv'), tau_all);
     
-    %% Bee swarm plot for distribution of tau
-    Colors = zeros(length(n_count_all),3);
-    figure;
-    label = sprintfc('%.f',n_count_all);
-    UnivarScatter(tau,'Label',label,'MarkerFaceColor',Colors);
-    saveas(gcf, fullfile(filepath,filesep,strcat(num2str(B(1)),'_Tau distribution.fig')));
+        filename6 = strcat(filepath, filesep, 'A', num2str(n_count_total),...
+            '_summary_1koff_', num2str(n_repeat),'_B1_',...
+            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
+            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+        dlmwrite(filename6, A_koff1_summary);
+        A_tau_all(:,u) = 1./A_koff1_summary(:,3);
+        dlmwrite(strcat(filepath, filesep,'AG', num2str(B(1)),'_',num2str(B(2)),...
+        '_Summary_1koff_tau.csv'), A_tau_all);
+         
+    catch
+    end
+    % from bi-exponential fit
+    try
+        filename6 = strcat(filepath, filesep, num2str(n_count_total),...
+            '_summary_2koff', num2str(n_repeat),'_B1_',...
+            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
+            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+        dlmwrite(filename6, koff2_summary);
+        
+        tau1_2_all(:,u) = 1./koff2_summary(:,3);
+        B1_2_all(:,u)   =    koff2_summary(:,5);
+        tau2_2_all(:,u) = 1./koff2_summary(:,7);
+        
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_2koff_tau1.csv'), tau1_2_all);
+    % save time constants (from globaly fitting using mono-exponential function) as csv file
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_2koff_B1.csv'), B1_2_all);
+    % save time constants (from globaly fitting using mono-exponential function) as csv file
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_2koff_tau2.csv'), tau2_2_all);
+        
+        filename7 = strcat(filepath, filesep, 'A', num2str(n_count_total),...
+            '_summary_2koff', num2str(n_repeat),'_B1_',...
+            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
+            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+        dlmwrite(filename7, A_koff2_summary);
+        
+        A_tau1_2_all(:,u) = 1./A_koff2_summary(:,3);
+        A_B1_2_all(:,u)   =    A_koff2_summary(:,5);
+        A_tau2_2_all(:,u) = 1./A_koff2_summary(:,7);
+        dlmwrite(strcat(filepath, filesep,'AG', num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_2koff_tau1.csv'), A_tau1_2_all);
+    % save time constants (from globaly fitting using mono-exponential function) as csv file
+        dlmwrite(strcat(filepath, filesep, 'AG', num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_2koff_B1.csv'), A_B1_2_all);
+    % save time constants (from globaly fitting using mono-exponential function) as csv file
+        dlmwrite(strcat(filepath, filesep, 'AG', num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_2koff_tau2.csv'), A_tau2_2_all);   
+    catch
+    end
+    
+    try
+        filename7 = strcat(filepath, filesep, num2str(n_count_total),...
+            '_summary_3koff', num2str(n_repeat),'_B1_',...
+            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
+            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+        dlmwrite(filename7, koff3_summary);
+        tau1_3_all(:,u) = 1./koff3_summary(:,3);
+        B1_3_all(:,u)   =    koff3_summary(:,5);
+        tau2_3_all(:,u) = 1./koff3_summary(:,7);
+        B2_3_all(:,u)   =    koff3_summary(:,9);
+        tau3_3_all(:,u) = 1./koff3_summary(:,11);
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_3koff_B1.csv'), B1_3_all);
+    
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_3koff_B2.csv'), B2_3_all);
+    
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_3koff_tau1.csv'), tau1_3_all);
+    
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_3koff_tau2.csv'), tau2_3_all);
+    
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_3koff_tau3.csv'), tau3_3_all);
+        
+        filename8 = strcat(filepath, filesep, 'A', num2str(n_count_total),...
+            '_summary_3koff', num2str(n_repeat),'_B1_',...
+            num2str(B(1)),'_koff1_',num2str(koff1), '_B2_',...
+            num2str(B(2)), '_koff2_',num2str(koff2),'.csv');
+        dlmwrite(filename8, A_koff3_summary);
+        A_tau1_3_all(:,u) = 1./A_koff3_summary(:,3);
+        A_B1_3_all(:,u)   =    A_koff3_summary(:,5);
+        A_tau2_3_all(:,u) = 1./A_koff3_summary(:,7);
+        A_B2_3_all(:,u)   =    A_koff3_summary(:,9);
+        A_tau3_3_all(:,u) = 1./A_koff3_summary(:,11);
+        dlmwrite(strcat(filepath, filesep, 'AG', num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_3koff_B1.csv'), A_B1_3_all);
+    
+        dlmwrite(strcat(filepath, filesep, 'AG', num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_3koff_B2.csv'), A_B2_3_all);
+    
+        dlmwrite(strcat(filepath, filesep, 'AG', num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_3koff_tau1.csv'), A_tau1_3_all);
+    
+        dlmwrite(strcat(filepath, filesep, 'AG', num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_3koff_tau2.csv'), A_tau2_3_all);
+    
+        dlmwrite(strcat(filepath, filesep, 'AG', num2str(B(1)),'_', num2str(B(2)),...
+        '_Summary_3koff_tau3.csv'), A_tau3_3_all);
+    
+    catch
+    end 
+    end
+%% Bee swarm plot for distribution of tau
+    try    
+        Colors = zeros(length(n_count_all),3);
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(tau_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL',num2str(B(1)), '_',...
+            num2str(B(2)),'_1koff_Tau_distribution.fig')));
+    
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(tau1_2_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL',num2str(B(1)), '_',...
+            num2str(B(2)),'_2koff_Tau1_distribution.fig')));   
+
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(tau2_2_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL',num2str(B(1)), '_',...
+            num2str(B(2)),'_2koff_Tau2_distribution.fig')));
+        
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(B1_2_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL',num2str(B(1)), '_',...
+            num2str(B(2)),'_2koff_B1_distribution.fig')));
+ 
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(tau1_3_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL',num2str(B(1)), '_',...
+            num2str(B(2)),'_3koff_Tau1_distribution.fig')));   
+
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(tau2_3_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL',num2str(B(1)), '_',...
+            num2str(B(2)),'_3koff_Tau2_distribution.fig')));
+        
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(tau3_3_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL',num2str(B(1)), '_',...
+            num2str(B(2)),'_3koff_Tau3_distribution.fig')));
+        
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(B1_3_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL',num2str(B(1)), '_',...
+            num2str(B(2)),'_3koff_B1_distribution.fig')));   
+
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(B2_3_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL',num2str(B(1)), '_',...
+            num2str(B(2)),'_3koff_B2_distribution.fig')));
+    catch
+    end
+    close all;
+           %% standard deviations of tau values and amplitudes
+    try
+ 
+        tau_temp    = tau_all - 1/koff1;
+        tau_temp    = tau_temp.*tau_temp;
+        sd_tau      = sqrt(sum(tau_temp,1)./n_repeat_all);
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_',...
+            num2str(B(2)),'_1koff_Summary_tau_sd.csv'), sd_tau);
+   
+        tau1_2_temp = tau1_2_all - 1/koff1; 
+        tau1_2_temp = tau1_2_temp.*tau1_2_temp;
+        tau2_2_temp = tau2_2_all - 1/koff2; 
+        tau2_2_temp = tau2_2_temp.*tau2_2_temp;
+        sd_tau1_2   = sqrt(sum(tau1_2_temp,1)./n_repeat_all);
+        sd_tau2_2   = sqrt(sum(tau2_2_temp,1)./n_repeat_all);
+        B1_2_temp   = B1_2_all - B(1); 
+        B1_2_temp   = B1_2_temp.*B1_2_temp;
+        sd_B1_2     = sqrt(sum(B1_2_temp,1)./n_repeat_all);
+        sd_2_table  = [n_count_all sd_B1_2' sd_tau1_2' sd_tau2_2'];
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_',...
+            num2str(B(2)),'_2koff_Summary_tau1_tau2_amp_sd.csv'), sd_2_table);
+    
+        tau1_3_temp = tau1_3_all - 1/koff1; 
+        tau1_3_temp = tau1_3_temp.*tau1_3_temp;
+        tau2_3_temp = tau2_3_all - 1/koff2; 
+        tau2_3_temp = tau2_3_temp.*tau2_3_temp;
+        tau3_3_temp = tau3_3_all - 1/koff3; 
+        tau3_3_temp = tau3_3_temp.*tau3_3_temp;
+        sd_tau1_3   = sqrt(sum(tau1_3_temp,1)./n_repeat_all);
+        sd_tau2_3   = sqrt(sum(tau2_3_temp,1)./n_repeat_all);
+        sd_tau3_3   = sqrt(sum(tau3_3_temp,1)./n_repeat_all);
+        B1_3_temp   = B1_3_all - B(1); 
+        B1_3_temp   = B1_3_temp.*B1_3_temp;
+        B2_3_temp   = B2_3_all - B(2); 
+        B2_3_temp   = B2_3_temp.*B2_3_temp;
+        sd_B1_3     = sqrt(sum(B1_3_temp,1)./n_repeat_all);
+        sd_B2_3     = sqrt(sum(B2_3_temp,1)./n_repeat_all);
+        sd_3_table = [n_count_all  sd_B1_3' sd_B2_3' sd_tau1_3'...
+            sd_tau2_3' sd_tau3_3'];
+        dlmwrite(strcat(filepath, filesep,'AL',num2str(B(1)),'_',...
+            num2str(B(2)),'_3koff_Summary_tau_amp_sd.csv'), sd_3_table);
+    catch
+        
+    end
+    %% Bee swarm plot - Amplitude as a global parameter
+    try
+        Colors = zeros(length(n_count_all),3);
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(A_tau_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep, strcat('AG', num2str(B(1)),...
+            '_', num2str(B(2)),'_1koff_Tau_distribution.fig')));
+    
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(A_tau1_2_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep, strcat('AG', num2str(B(1)),...
+        '_', num2str(B(2)),'_2koff_Tau1_distribution.fig')));   
+
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(A_tau2_2_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep, strcat('AG', num2str(B(1)),...
+            '_', num2str(B(2)),'_2koff_Tau2_distribution.fig')));
+        
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(A_B1_2_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AG', num2str(B(1)),...
+            '_',num2str(B(2)),'_2koff_B1_distribution.fig')));
+   
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(A_tau1_3_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AG',num2str(B(1)),...
+            '_',num2str(B(2)),'_3koff_Tau1_distribution.fig')));   
+
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(A_tau2_3_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AG',num2str(B(1)),...
+            '_',num2str(B(2)),'_3koff_Tau2_distribution.fig')));
+        
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(A_tau3_3_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AG',num2str(B(1)), ...
+            '_', num2str(B(2)),'_3koff_Tau3_distribution.fig')));
+        
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(A_B1_3_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AG',num2str(B(1)),...
+            '_',num2str(B(2)),'_3koff_B1_distribution.fig')));   
+
+        figure;
+        label = sprintfc('%.f',n_count_all);
+        UnivarScatter(A_B2_3_all,'Label',label,'MarkerFaceColor',Colors);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AG',num2str(B(1)),...
+            '_',num2str(B(2)),'_3koff_B2_distribution.fig')));
+    catch
+    end
+        close all;
+%% standard deviations of tau values and amplitudes
+    try     
+        A_tau_temp    = A_tau_all - 1/koff1;
+        A_tau_temp    = A_tau_temp.*A_tau_temp;
+        A_sd_tau      = sqrt(sum(A_tau_temp,1)./n_repeat_all);
+        dlmwrite(strcat(filepath, filesep,'AG',num2str(B(1)),'_',...
+            num2str(B(2)),'_1koff_Summary_tau_sd.csv'), A_sd_tau);
+        sd_ratio_1 = sd_tau./A_sd_tau;
+        figure;
+        bar(sd_ratio_1);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL_over_AG',num2str(B(1)),...
+            '_',num2str(B(2)),'_1koff_tau_distribution.fig')));
+        
+        A_tau1_2_temp = A_tau1_2_all - 1/koff1; 
+        A_tau1_2_temp = A_tau1_2_temp.*A_tau1_2_temp;
+        A_tau2_2_temp = A_tau2_2_all - 1/koff2; 
+        A_tau2_2_temp = A_tau2_2_temp.*A_tau2_2_temp;
+        A_sd_tau1_2   = sqrt(sum(A_tau1_2_temp,1)./n_repeat_all);
+        A_sd_tau2_2   = sqrt(sum(A_tau2_2_temp,1)./n_repeat_all);
+        A_B1_2_temp   = A_B1_2_all - B(1); 
+        A_B1_2_temp   = A_B1_2_temp.*A_B1_2_temp;
+        A_sd_B1_2     = sqrt(sum(A_B1_2_temp,1)./n_repeat_all);
+        A_sd_2_table  = [n_count_all A_sd_B1_2' A_sd_tau1_2' A_sd_tau2_2'];
+        dlmwrite(strcat(filepath, filesep,'AG',num2str(B(1)),'_',...
+            num2str(B(2)),'_2koff_Summary_tau1_tau2_amp_sd.csv'), A_sd_2_table);
+        sd_ratio_2 = sd_2_table(:,2:end)./A_sd_2_table(:,2:end);
+        figure;
+        bar(sd_ratio_2);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL_over_AG',num2str(B(1)),...
+            '_',num2str(B(2)),'_2koff.fig')));
+        
+        
+        A_tau1_3_temp = A_tau1_3_all - 1/koff1; 
+        A_tau1_3_temp = A_tau1_3_temp.*A_tau1_3_temp;
+        A_tau2_3_temp = A_tau2_3_all - 1/koff2; 
+        A_tau2_3_temp = A_tau2_3_temp.*A_tau2_3_temp;
+        A_tau3_3_temp = A_tau3_3_all - 1/koff3; 
+        A_tau3_3_temp = A_tau3_3_temp.*A_tau3_3_temp;
+        A_sd_tau1_3   = sqrt(sum(A_tau1_3_temp,1)./n_repeat_all);
+        A_sd_tau2_3   = sqrt(sum(A_tau2_3_temp,1)./n_repeat_all);
+        A_sd_tau3_3   = sqrt(sum(A_tau3_3_temp,1)./n_repeat_all);
+        A_B1_3_temp   = A_B1_3_all - B(1); 
+        A_B1_3_temp   = A_B1_3_temp.*A_B1_3_temp;
+        A_B2_3_temp   = A_B2_3_all - B(2); 
+        A_B2_3_temp   = A_B2_3_temp.*A_B2_3_temp;
+        A_sd_B1_3     = sqrt(sum(A_B1_3_temp,1)./n_repeat_all);
+        A_sd_B2_3     = sqrt(sum(A_B2_3_temp,1)./n_repeat_all);
+        A_sd_3_table = [n_count_all A_sd_B1_3' A_sd_B2_3' A_sd_tau1_3'...
+            A_sd_tau2_3' A_sd_tau3_3'];
+        dlmwrite(strcat(filepath, filesep,'AG',num2str(B(1)),'_',...
+            num2str(B(2)),'_3koff_Summary_tau_amp_sd.csv'), A_sd_3_table);   
+    catch 
+    end
+    
+    try
+        sd_ratio_3 = sd_3_table(:,2:end)./A_sd_3_table(:,2:end);
+        figure;
+        bar(sd_ratio_3);
+        saveas(gcf, fullfile(filepath,filesep,strcat('AL_over_AG',num2str(B(1)),...
+            '_',num2str(B(2)),'_3koff.fig')));
+        close all; 
+    catch
+    end
 end
+
 end
  
 function [counts, each_molecule] = simulate_res_time(mu,edges,n_count)
@@ -365,12 +795,15 @@ function [counts, each_molecule] = simulate_res_time(mu,edges,n_count)
 %--------------------------------------------------------------------------
 each_molecule = [];
 counts = zeros(10,1);
+nx = 0;
 while counts(1) < n_count
     sim = exprnd(mu,round(n_count/2.71),1);
     each_molecule = [each_molecule; sim];
     [N,~] = histcounts(sim,edges);
     counts = counts + N';
+    nx = nx + 1;
 end
+nx
 end
 
 
